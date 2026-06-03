@@ -122,14 +122,19 @@
   }
   .stand-notes-preview.visible{display:block}
 
-  /* Note dot indicator */
-  .note-dot{
-    position:absolute; top:4px; right:5px;
-    width:6px; height:6px; border-radius:50%;
-    background:#FFD700; display:none;
-    box-shadow:0 0 4px rgba(255,220,0,.6);
+  /* Notes banner — visible strip at bottom of card */
+  .note-banner{
+    position:absolute; bottom:0; left:0; right:0;
+    height:18px; border-radius:0 0 5px 5px;
+    background:rgba(255,210,0,.22);
+    border-top:1.5px solid rgba(255,210,0,.5);
+    display:none; align-items:center; justify-content:center;
+    gap:3px; font-size:8px; font-weight:700;
+    color:rgba(120,90,0,.85); letter-spacing:.5px;
+    text-transform:uppercase;
   }
-  .note-dot.on{display:block}
+  .note-banner.on{display:flex}
+  .note-banner::before{content:'📝'; font-size:9px}
 
   /* Resize handle */
   .rz-handle{
@@ -215,6 +220,12 @@
   .nd-clear:hover{background:rgba(255,80,80,.1);color:#ff7070;border-color:rgba(255,80,80,.2)}
   .nd-char{font-size:9px;color:rgba(255,255,255,.25);margin-left:auto}
 
+  /* TOAST */
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a1a14;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:9px 18px;font-size:12px;color:#fff;z-index:10000;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;display:flex;align-items:center;gap:7px;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.ok{border-color:rgba(0,200,100,.35);background:#0f1f14}
+  .toast.warn{border-color:rgba(255,180,0,.35);background:#1f1a0a}
+
   /* stand size display */
   .size-tag{
     position:absolute;top:3px;left:4px;font-size:7px;
@@ -260,7 +271,10 @@
     <button class="btn btn-swap" id="swap-btn" onclick="toggleSwapMode()">⇄ Trocar</button>
     <button class="btn btn-ghost" onclick="resetLayout()">↺ Resetar</button>
     <button class="btn btn-ghost" onclick="openModal('addModal')">+ Stand</button>
+    <button class="btn btn-ghost" id="save-btn" onclick="saveLayout()">💾 Salvar</button>
+    <button class="btn btn-ghost" onclick="triggerImport()">📂 Carregar</button>
     <button class="btn btn-white" onclick="exportJSON()">⬇ Exportar</button>
+    <input type="file" id="import-input" accept=".json" style="display:none" onchange="importJSON(event)">
   </div>
 </header>
 
@@ -435,6 +449,9 @@
   </div>
 </div>
 
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
 <script>
 /* ═══════════════════════════
    ARENA META
@@ -503,9 +520,13 @@ function render() {
     sizeTag.className = 'size-tag';
     sizeTag.textContent = `${s.w}×${s.h}`;
 
-    // Note dot
-    const noteDot = document.createElement('div');
-    noteDot.className = `note-dot${s.notes ? ' on' : ''}`;
+    // Note banner
+    const noteBanner = document.createElement('div');
+    noteBanner.className = `note-banner${s.notes ? ' on' : ''}`;
+    if (s.notes) {
+      const preview = s.notes.length > 22 ? s.notes.slice(0,22)+'…' : s.notes;
+      noteBanner.appendChild(document.createTextNode(preview));
+    }
 
     // Icon
     const icon = document.createElement('div');
@@ -530,7 +551,7 @@ function render() {
     rzHandle.className = 'rz-handle';
     rzHandle.addEventListener('mousedown', e => rzStart(e, s.id));
 
-    el.append(sizeTag, noteDot, icon, name, notePrev, rzHandle);
+    el.append(sizeTag, noteBanner, icon, name, notePrev, rzHandle);
 
     if (s.id === selId)    el.classList.add('selected');
     if (s.id === swapFirst) el.classList.add('swap-pick');
@@ -612,7 +633,7 @@ document.addEventListener('mouseup', () => {
       const s=stands.find(x=>x.id===dragId);
       s.x=parseInt(el.style.left); s.y=parseInt(el.style.top);
     }
-    dragId=null; render();
+    dragId=null; render(); autoSave();
   }
   if (rzId) {
     const el=document.getElementById(`st-${rzId}`);
@@ -620,7 +641,7 @@ document.addEventListener('mouseup', () => {
       const s=stands.find(x=>x.id===rzId);
       s.w=Math.round(parseFloat(el.style.width)); s.h=Math.round(parseFloat(el.style.height));
     }
-    rzId=null; render();
+    rzId=null; render(); autoSave();
   }
 });
 
@@ -673,7 +694,7 @@ function handleSwap(id) {
   swapFirst=null; swapMode=false;
   document.getElementById('swap-btn').classList.remove('active');
   document.getElementById('swap-hint').classList.remove('on');
-  render();
+  autoSave(); render();
 }
 
 /* ═══════════════════════════
@@ -696,7 +717,7 @@ function closeNotes() {
 function saveNotes() {
   const s=stands.find(x=>x.id===notesId); if(!s) return;
   s.notes=document.getElementById('nd-text').value.trim();
-  closeNotes(); render();
+  closeNotes(); autoSave(); render(); showToast('Anotação salva!');
 }
 function clearNotes() {
   document.getElementById('nd-text').value='';
@@ -728,7 +749,7 @@ document.addEventListener('click',()=>ctx.style.display='none');
 function ctxNotes(){ctx.style.display='none';openNotes(ctxId);}
 function ctxRename(){ctx.style.display='none';const s=stands.find(x=>x.id===ctxId);if(!s)return;document.getElementById('rn-input').value=s.name;openModal('renameModal');}
 function ctxArena(){ctx.style.display='none';const s=stands.find(x=>x.id===ctxId);if(!s)return;document.getElementById('am-sname').textContent=s.name;selArenaOpt=s.arena;document.querySelectorAll('.ao').forEach(el=>el.classList.toggle('sel',el.dataset.v===s.arena));openModal('arenaModal');}
-function ctxDelete(){ctx.style.display='none';stands=stands.filter(x=>x.id!==ctxId);if(selId===ctxId)selId=null;render();}
+function ctxDelete(){ctx.style.display='none';stands=stands.filter(x=>x.id!==ctxId);if(selId===ctxId)selId=null;autoSave();render();}
 
 /* ═══════════════════════════
    FILTER
@@ -748,15 +769,84 @@ function setMode(m){mode=m;document.getElementById('mb-move').classList.toggle('
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function selectArenaOpt(el){document.querySelectorAll('.ao').forEach(e=>e.classList.remove('sel'));el.classList.add('sel');selArenaOpt=el.dataset.v;}
-function confirmArena(){const s=stands.find(x=>x.id===ctxId);if(s&&selArenaOpt)s.arena=selArenaOpt;closeModal('arenaModal');render();}
-function confirmRename(){const s=stands.find(x=>x.id===ctxId);const n=document.getElementById('rn-input').value.trim();if(s&&n)s.name=n;closeModal('renameModal');render();}
-function confirmAdd(){const name=document.getElementById('ns-name').value.trim();const arena=document.getElementById('ns-arena').value;const icon=document.getElementById('ns-icon').value.trim()||'📋';if(!name)return;stands.push({id:'u'+Date.now(),name,arena,icon,x:60,y:420,w:130,h:80,notes:''});closeModal('addModal');document.getElementById('ns-name').value='';render();}
+function confirmArena(){const s=stands.find(x=>x.id===ctxId);if(s&&selArenaOpt)s.arena=selArenaOpt;closeModal('arenaModal');autoSave();render();}
+function confirmRename(){const s=stands.find(x=>x.id===ctxId);const n=document.getElementById('rn-input').value.trim();if(s&&n)s.name=n;closeModal('renameModal');autoSave();render();}
+function confirmAdd(){const name=document.getElementById('ns-name').value.trim();const arena=document.getElementById('ns-arena').value;const icon=document.getElementById('ns-icon').value.trim()||'📋';if(!name)return;stands.push({id:'u'+Date.now(),name,arena,icon,x:60,y:420,w:130,h:80,notes:''});closeModal('addModal');document.getElementById('ns-name').value='';autoSave();render();}
+
+/* ═══════════════════════════
+   TOAST
+═══════════════════════════ */
+let toastTimer=null;
+function showToast(msg,type='ok'){
+  const t=document.getElementById('toast');
+  t.className=`toast ${type}`;
+  t.innerHTML=(type==='ok'?'✅ ':'⚠️ ')+msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),2600);
+}
+
+/* ═══════════════════════════
+   SAVE / LOAD (localStorage)
+═══════════════════════════ */
+const STORAGE_KEY='ifood_feira_layout_v1';
+
+function saveLayout(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stands));
+    const btn=document.getElementById('save-btn');
+    btn.textContent='✓ Salvo';
+    btn.style.background='rgba(0,200,100,.2)';
+    btn.style.borderColor='rgba(0,200,100,.4)';
+    setTimeout(()=>{ btn.textContent='💾 Salvar'; btn.style.background=''; btn.style.borderColor=''; }, 1800);
+    showToast('Layout salvo com sucesso!');
+  } catch(e){ showToast('Erro ao salvar','warn'); }
+}
+
+function autoSave(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(stands)); } catch(e){}
+}
+
+function loadFromStorage(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    const data=JSON.parse(raw);
+    if(!Array.isArray(data)||data.length===0) return false;
+    stands=data.map(s=>({ notes:'', ...s }));
+    return true;
+  } catch(e){ return false; }
+}
+
+/* ═══════════════════════════
+   EXPORT / IMPORT
+═══════════════════════════ */
+function triggerImport(){ document.getElementById('import-input').click(); }
+
+function importJSON(ev){
+  const file=ev.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const data=JSON.parse(e.target.result);
+      if(!Array.isArray(data)) throw new Error();
+      stands=data.map(s=>({ notes:'', ...s }));
+      curFilter='all'; selId=null;
+      document.querySelectorAll('.ac').forEach(c=>c.classList.remove('active'));
+      document.querySelector('.ac[data-f="all"]').classList.add('active');
+      render(); autoSave();
+      showToast(`Layout carregado — ${stands.length} stands`);
+    } catch(e){ showToast('Arquivo inválido','warn'); }
+  };
+  reader.readAsText(file);
+  ev.target.value='';
+}
 
 /* ═══════════════════════════
    RESET / EXPORT
 ═══════════════════════════ */
-function resetLayout(){if(!confirm('Resetar layout?'))return;mkStands();curFilter='all';selId=null;swapMode=false;swapFirst=null;notesId=null;closeNotes();document.querySelectorAll('.ac').forEach(c=>c.classList.remove('active'));document.querySelector('.ac[data-f="all"]').classList.add('active');document.getElementById('swap-btn').classList.remove('active');document.getElementById('swap-hint').classList.remove('on');render();}
-function exportJSON(){const blob=new Blob([JSON.stringify(stands,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='layout_feira_beneficios.json';a.click();}
+function resetLayout(){if(!confirm('Resetar layout? Isso apagará o layout salvo.'))return;mkStands();curFilter='all';selId=null;swapMode=false;swapFirst=null;notesId=null;closeNotes();document.querySelectorAll('.ac').forEach(c=>c.classList.remove('active'));document.querySelector('.ac[data-f="all"]').classList.add('active');document.getElementById('swap-btn').classList.remove('active');document.getElementById('swap-hint').classList.remove('on');autoSave();render();showToast('Layout resetado','warn');}
+function exportJSON(){const blob=new Blob([JSON.stringify(stands,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='layout_feira_beneficios.json';a.click();showToast('Arquivo exportado!');}
 
 /* ═══════════════════════════
    ARQUIBANCADA
@@ -766,8 +856,13 @@ function exportJSON(){const blob=new Blob([JSON.stringify(stands,null,2)],{type:
 /* ═══════════════════════════
    INIT
 ═══════════════════════════ */
-mkStands();
-render();
+(function initApp(){
+  const loaded = loadFromStorage();
+  if (!loaded) mkStands();
+  else showToast(`Layout restaurado — ${stands.length} stands`);
+  render();
+  if (loaded) setTimeout(()=>document.getElementById('save-btn').textContent='💾 Salvar',10);
+})();
 </script>
 </body>
 </html>
